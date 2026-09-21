@@ -129,7 +129,7 @@ integration isn't loaded — check the logs and confirm it's on the latest versi
 - File tools are confined to `/config/esphome`; directory traversal (`..`, `/`,
   `\`) is rejected outright.
 - `secrets.yaml` / `secrets.yml` are blocked from read, write, create, and build.
-- Writes/creates accept only `.yaml` / `.yml`.
+- Writes/creates/patches accept only `.yaml` / `.yml`.
 - Supervisor requests use the `SUPERVISOR_TOKEN` injected at runtime — no
   credentials are stored.
 
