@@ -41,6 +41,7 @@ The `ESPHome Builder` LLM API exposes these tools:
 | `esphome_read_yaml` | Read a config from `/config/esphome` |
 | `esphome_create_config` | Create a **new** config (fails if it exists) |
 | `esphome_write_yaml` | Overwrite an existing config |
+| `esphome_patch_yaml` | Edit an existing config via exact-match `{old_string, new_string}` replacements, without resending the whole file |
 | `esphome_add_secret` | Insert a key into `secrets.yaml` — **insert-only, write-only** (never reads/returns values; errors if the key exists) |
 | `esphome_validate` | Validate a config without building |
 | `esphome_compile` | Compile firmware (runs to completion, returns log + exit code) |
