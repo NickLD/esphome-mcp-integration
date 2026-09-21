@@ -564,6 +564,95 @@ class WriteYamlTool(llm.Tool):
         return {"success": True, "filename": filename}
 
 
+class PatchYamlTool(llm.Tool):
+    """Edit an existing ESPHome YAML configuration file via exact-match
+    string replacements, without resending the whole file."""
+
+    name = "esphome_patch_yaml"
+    description = (
+        "Edit an existing file in /config/esphome by replacing one or more "
+        "exact text snippets, instead of resending the whole file's content "
+        "like esphome_write_yaml requires. Each patch's 'old_string' must "
+        "match exactly once in the file (after any earlier patches in this "
+        "same call have been applied) - zero matches or more than one is an "
+        "error, so there's never ambiguity about what changed. Patches apply "
+        "in the order given, and nothing is written to disk unless every "
+        "patch succeeds (all-or-nothing). The file must already exist; use "
+        "esphome_create_config for a new file. With extra file access "
+        "enabled, also works on non-YAML files and subdirectory paths."
+    )
+    parameters = vol.Schema(
+        {
+            vol.Required("filename"): str,
+            vol.Required("patches"): [
+                vol.Schema(
+                    {
+                        vol.Required("old_string"): str,
+                        vol.Required("new_string"): str,
+                    }
+                )
+            ],
+        }
+    )
+
+    async def async_call(
+        self, hass: HomeAssistant, tool_input: llm.ToolInput, llm_context: llm.LLMContext
+    ) -> dict[str, Any]:
+        try:
+            filename = _guard(
+                tool_input.tool_args["filename"],
+                require_yaml=True,
+                allow_extra=_allow_extra_files(hass),
+            )
+        except ValueError as err:
+            return {"error": str(err)}
+        path = os.path.join(ESPHOME_CONFIG_DIR, filename)
+        try:
+            content = await hass.async_add_executor_job(_read_file, path)
+        except FileNotFoundError:
+            return {
+                "error": (
+                    f"File '{filename}' not found in {ESPHOME_CONFIG_DIR}; "
+                    "use esphome_create_config to create it."
+                )
+            }
+        except OSError as err:
+            return {"error": str(err)}
+
+        patches = tool_input.tool_args["patches"]
+        try:
+            patched = await hass.async_add_executor_job(
+                _apply_patches, content, patches
+            )
+        except _PatchNotFound as err:
+            return {
+                "error": (
+                    f"Patch {err.index}: old_string not found "
+                    f"({err.old_string[:80]!r}). No changes were written."
+                )
+            }
+        except _PatchAmbiguous as err:
+            return {
+                "error": (
+                    f"Patch {err.index}: old_string matched {err.count} times "
+                    f"({err.old_string[:80]!r}); it must match exactly once. "
+                    "No changes were written."
+                )
+            }
+        except ValueError as err:
+            return {"error": f"{err}. No changes were written."}
+
+        try:
+            await hass.async_add_executor_job(_write_file, path, patched)
+        except OSError as err:
+            return {"error": str(err)}
+        return {
+            "success": True,
+            "filename": filename,
+            "patches_applied": len(patches),
+        }
+
+
 class AddSecretTool(llm.Tool):
     """Insert a key into secrets.yaml (insert-only, write-only)."""
 
@@ -907,7 +996,11 @@ _API_PROMPT = (
     "write, or build secrets.yaml directly. Compilation and "
     "uploads run to completion before returning; log streaming returns a bounded "
     "window. Prefer validating before compiling, and report exit codes and "
-    "relevant log lines back to the user."
+    "relevant log lines back to the user. Prefer esphome_patch_yaml over "
+    "esphome_write_yaml when making small, targeted edits to a file that "
+    "already exists - it avoids resending the entire file's contents. Use "
+    "esphome_write_yaml only for a full rewrite, and esphome_create_config "
+    "for a brand-new file."
 )
 
 # Appended to the prompt only when the 'extra file access' option is enabled.
@@ -934,6 +1027,7 @@ class ESPHomeBuilderAPI(llm.API):
             ReadYamlTool(),
             CreateConfigTool(),
             WriteYamlTool(),
+            PatchYamlTool(),
             AddSecretTool(),
             ValidateTool(),
             CompileTool(),
