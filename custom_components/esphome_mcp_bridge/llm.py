@@ -152,6 +152,50 @@ def _insert_secret(path: str, key: str, value: str) -> None:
         fh.write(f"{prefix}{key}: {json.dumps(value)}\n")
 
 
+class _PatchNotFound(Exception):
+    """A patch's old_string did not match anywhere in the file."""
+
+    def __init__(self, index: int, old_string: str) -> None:
+        self.index = index
+        self.old_string = old_string
+        super().__init__(f"patch {index}: old_string not found")
+
+
+class _PatchAmbiguous(Exception):
+    """A patch's old_string matched more than once."""
+
+    def __init__(self, index: int, old_string: str, count: int) -> None:
+        self.index = index
+        self.old_string = old_string
+        self.count = count
+        super().__init__(f"patch {index}: old_string matched {count} times")
+
+
+def _apply_patches(content: str, patches: list[dict[str, str]]) -> str:
+    """Apply each {old_string, new_string} patch in order, in memory.
+
+    Raises ValueError for an empty old_string, _PatchNotFound if a patch's
+    old_string has zero matches, _PatchAmbiguous if it has more than one.
+    Patches apply sequentially against the running result, so a later patch
+    may target text introduced by an earlier one. Returns the fully-patched
+    string; never writes anything (that's the caller's job, once, after every
+    patch has succeeded) - this is what makes the write atomic.
+    """
+    result = content
+    for index, patch in enumerate(patches):
+        old = patch["old_string"]
+        new = patch["new_string"]
+        if old == "":
+            raise ValueError(f"patch {index}: old_string must not be empty")
+        count = result.count(old)
+        if count == 0:
+            raise _PatchNotFound(index, old)
+        if count > 1:
+            raise _PatchAmbiguous(index, old, count)
+        result = result.replace(old, new, 1)
+    return result
+
+
 async def _async_connection(hass: HomeAssistant, slug: str | None):
     """Resolve the add-on and open a dashboard connection (base URL + auth).
 
