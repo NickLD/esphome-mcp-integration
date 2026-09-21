@@ -120,8 +120,10 @@ def _write_file(path: str, content: str) -> None:
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(content)
+    os.replace(tmp, path)
 
 
 class _SecretKeyExists(Exception):
@@ -177,9 +179,12 @@ def _apply_patches(content: str, patches: list[dict[str, str]]) -> str:
     Raises ValueError for an empty old_string, _PatchNotFound if a patch's
     old_string has zero matches, _PatchAmbiguous if it has more than one.
     Patches apply sequentially against the running result, so a later patch
-    may target text introduced by an earlier one. Returns the fully-patched
-    string; never writes anything (that's the caller's job, once, after every
-    patch has succeeded) - this is what makes the write atomic.
+    may target text introduced by an earlier one. "Exactly once" counts
+    non-overlapping occurrences (str.count/str.replace semantics), so a
+    self-overlapping old_string (e.g. "aa" within "aaa") can undercount.
+    Returns the fully-patched string; never writes anything (that's the
+    caller's job, once, after every patch has succeeded) - this is what
+    makes the write atomic.
     """
     result = content
     for index, patch in enumerate(patches):
@@ -584,14 +589,17 @@ class PatchYamlTool(llm.Tool):
     parameters = vol.Schema(
         {
             vol.Required("filename"): str,
-            vol.Required("patches"): [
-                vol.Schema(
-                    {
-                        vol.Required("old_string"): str,
-                        vol.Required("new_string"): str,
-                    }
-                )
-            ],
+            vol.Required("patches"): vol.All(
+                [
+                    vol.Schema(
+                        {
+                            vol.Required("old_string"): str,
+                            vol.Required("new_string"): str,
+                        }
+                    )
+                ],
+                vol.Length(min=1),
+            ),
         }
     )
 
