@@ -40,3 +40,6 @@ ENV/
 # Home Assistant specific
 *.log
 .HA_VERSION
+
+# Superpowers subagent-driven-development scratch workspace
+.superpowers/
